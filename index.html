@@ -356,7 +356,10 @@
 
       // Initialiser les icônes Lucide
       useEffect(() => {
-        Lucide.createIcons();
+        // Utiliser l'instance globale `lucide` fournie par le bundle UMD
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons();
+        }
       }, []);
 
       // Calcul des statistiques
