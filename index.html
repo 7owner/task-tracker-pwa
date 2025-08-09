@@ -58,6 +58,16 @@
       return pts;
     }
 
+    // Encode a user profile into a base64 invite token (handles unicode)
+    function encodeInvite(data) {
+      return btoa(encodeURIComponent(JSON.stringify(data)));
+    }
+
+    // Decode a base64 invite token back into a user profile
+    function decodeInvite(token) {
+      return JSON.parse(decodeURIComponent(atob(token)));
+    }
+
     // Custom hook: load state from localStorage and persist on changes
     function useAppState() {
       const [state, setState] = React.useState(() => {
@@ -226,6 +236,27 @@
         });
         showFlash('Commentaire ajouté 💬');
       };
+
+      // Add a friend profile from an invite code
+      const addFriendFromCode = (token) => {
+        try {
+          const data = decodeInvite(token.trim());
+          // ensure data has id, name, avatar
+          if (!data || !data.id || !data.name || !data.avatar) {
+            showFlash('Code invalide');
+            return;
+          }
+          setState(s => {
+            // do not duplicate existing profiles
+            if (s.profiles.some(p => p.id === data.id)) return s;
+            const newProfile = { id: data.id, name: data.name, avatar: data.avatar, points: 0, level: 1 };
+            return { ...s, profiles: [...s.profiles, newProfile] };
+          });
+          showFlash('Ami ajouté ✅');
+        } catch (e) {
+          showFlash('Code invalide');
+        }
+      };
       return (
         <div className="h-full flex flex-col">
           <header className="bg-white border-b">
@@ -248,7 +279,7 @@
             {tab === 'tasks' && <TasksView tasks={state.tasks.filter(t => t.ownerId === state.me)} objectives={state.objectives.filter(o=>o.ownerId===state.me)} onAdd={addTask} onToggle={toggleTask}/>} 
             {tab === 'objectives' && <ObjectivesView objectives={state.objectives.filter(o => o.ownerId === state.me)} onAdd={addObjective}/>} 
             {tab === 'journal' && <JournalView entry={state.journal[new Date().toISOString().slice(0,10)]} onSave={saveJournal} />} 
-            {tab === 'friends' && <FriendsView me={me} profiles={state.profiles} cheers={state.cheers} onCheer={cheer} />} 
+            {tab === 'friends' && <FriendsView me={me} profiles={state.profiles} cheers={state.cheers} onCheer={cheer} onAddFriend={addFriendFromCode} />} 
             {tab === 'feed' && <FeedView state={state} meId={state.me} onComment={commentOnJournal}/>} 
           </main>
           <footer className="text-center text-xs text-gray-500 p-3">PWA • Offline • Données locales</footer>
@@ -401,12 +432,21 @@
       );
     }
 
-    // Friends view component: list other profiles and allow cheering
-    function FriendsView({ me, profiles, cheers, onCheer }) {
+    // Friends view component: list other profiles and allow cheering and invites
+    function FriendsView({ me, profiles, cheers, onCheer, onAddFriend }) {
+      const [showInvite, setShowInvite] = React.useState(false);
+      const [showAdd, setShowAdd] = React.useState(false);
+      const [inputCode, setInputCode] = React.useState('');
+      // Encode current user profile into an invite token
+      const inviteCode = encodeInvite({ id: me.id, name: me.name, avatar: me.avatar });
       const others = profiles.filter(p => p.id !== me.id);
       return (
         <div>
           <h2 className="font-semibold mb-3">Amis</h2>
+          <div className="mb-3 flex gap-2">
+            <button onClick={() => setShowInvite(true)} className="px-3 py-2 rounded-lg border bg-gray-50">Inviter un ami</button>
+            <button onClick={() => setShowAdd(true)} className="px-3 py-2 rounded-lg border bg-gray-50">Ajouter via code</button>
+          </div>
           <div className="grid md:grid-cols-2 gap-3">
             {others.map(u => (
               <div key={u.id} className="bg-white border rounded-xl p-4 flex items-center justify-between">
@@ -424,6 +464,36 @@
             ))}
             {others.length === 0 && <div className="text-gray-500 text-sm">Pas encore d'amis. Tu es la seule personne pour l’instant.</div>}
           </div>
+          {/* Modal for invite code */}
+          {showInvite && (
+            <div className="fixed inset-0 bg-black/50 flex items-end z-50">
+              <div className="bg-white w-full rounded-t-2xl p-4">
+                <div className="flex items-center justify-between border-b pb-2"><h3 className="font-semibold">Inviter un ami</h3><button onClick={() => setShowInvite(false)}>✕</button></div>
+                <div className="py-3 space-y-3">
+                  <div>
+                    <label className="text-sm text-gray-600">Mon code :</label>
+                    <textarea readOnly className="w-full border rounded-lg px-3 py-2" value={inviteCode}></textarea>
+                  </div>
+                  <p className="text-xs text-gray-500">Partage ce code avec ton ami. Il peut l'ajouter dans son app via « Ajouter via code ».</p>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Modal for adding friend via code */}
+          {showAdd && (
+            <div className="fixed inset-0 bg-black/50 flex items-end z-50">
+              <div className="bg-white w-full rounded-t-2xl p-4">
+                <div className="flex items-center justify-between border-b pb-2"><h3 className="font-semibold">Ajouter un ami via code</h3><button onClick={() => setShowAdd(false)}>✕</button></div>
+                <div className="py-3 space-y-3">
+                  <input className="w-full border rounded-lg px-3 py-2" placeholder="Code d'invitation" value={inputCode} onChange={e => setInputCode(e.target.value)}/>
+                  <div className="flex gap-3">
+                    <button className="flex-1 px-3 py-2 border rounded-lg" onClick={() => setShowAdd(false)}>Annuler</button>
+                    <button className="flex-1 px-3 py-2 rounded-lg text-white bg-blue-600 disabled:opacity-50" disabled={!inputCode.trim()} onClick={() => { onAddFriend(inputCode); setShowAdd(false); setInputCode(''); }}>Ajouter</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
