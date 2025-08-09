@@ -2,714 +2,352 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Application de Suivi de Tâches</title>
-  <!-- Tailwind via CDN for quick styling -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#2563eb" />
+  <title>TaskMaster • Suivi & Défis</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png">
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- PWA manifest and icons -->
-  <link rel="manifest" href="manifest.json" />
-  <link rel="icon" href="icon-192.png" />
-  <meta name="theme-color" content="#111827" />
-  <!-- React and dependencies -->
-  <script src="https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/babel-standalone@7.24.7/babel.min.js"></script>
-  <script src="https://unpkg.com/lucide@0.441.0/dist/umd/lucide.min.js"></script>
+  <style>html,body,#root{height:100%}</style>
+
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body class="bg-gray-100">
+<body class="bg-gray-50">
   <div id="root"></div>
-  <!-- Register service worker for offline support -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker
-          .register('sw.js')
-          .catch(err => console.log('SW registration failed', err));
-      });
-    }
-  </script>
+
   <script type="text/babel">
     const { useState, useEffect } = React;
+    const STORAGE_KEY = "taskmaster_v1";
 
-    // Configuration des catégories
+    // Load/Save helpers
+    const load = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || null; } catch(e){ return null; } };
+    const save = (state) => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+
+    // Default demo state
+    const demo = {
+      currentUser: { id: 0, name: "Moi", avatar: "😊", streak: 3, totalPoints: 42, level: 2 },
+      friends: [
+        { id: 1, name: "Marie", email: "marie@example.com", avatar: "👩", streak: 5, totalPoints: 120, status: "active" },
+        { id: 2, name: "Thomas", email: "thomas@example.com", avatar: "👨", streak: 2, totalPoints: 60, status: "active" },
+      ],
+      tasks: [
+        { id: 1, title: "Réviser magnétostriction", description:"20 min", priority:"high", category:"personnel", dueDate: new Date().toISOString().slice(0,10), completed:false, createdAt:new Date().toISOString() },
+        { id: 2, title: "Course 30 min", description:"Cardio", priority:"medium", category:"sante", dueDate: "", completed:false, createdAt:new Date().toISOString() },
+      ]
+    };
+
     const categories = {
-      personnel: { name: 'Personnel', emoji: '👤', color: 'bg-blue-500' },
-      travail: { name: 'Travail', emoji: '💼', color: 'bg-purple-500' },
-      shopping: { name: 'Shopping', emoji: '🛒', color: 'bg-green-500' },
-      sante: { name: 'Santé', emoji: '❤️', color: 'bg-red-500' },
-      loisirs: { name: 'Loisirs', emoji: '🎨', color: 'bg-orange-500' },
+      personnel: { label: 'Personnel', color: 'bg-blue-500', emoji: '👤' },
+      travail: { label: 'Travail', color: 'bg-purple-500', emoji: '💼' },
+      shopping: { label: 'Shopping', color: 'bg-green-500', emoji: '🛒' },
+      sante: { label: 'Santé', color: 'bg-red-500', emoji: '❤️' },
+      loisirs: { label: 'Loisirs', color: 'bg-orange-500', emoji: '🎨' }
     };
-
-    // Configuration des priorités
     const priorities = {
-      low: { name: 'Faible', indicator: '●', color: 'text-green-500' },
-      medium: { name: 'Moyenne', indicator: '●●', color: 'text-yellow-500' },
-      high: { name: 'Élevée', indicator: '●●●', color: 'text-red-500' },
+      low: { label: 'Faible', color: 'bg-green-100 text-green-800', icon: '●', points: 1 },
+      medium: { label: 'Moyenne', color: 'bg-yellow-100 text-yellow-800', icon: '●●', points: 2 },
+      high: { label: 'Élevée', color: 'bg-red-100 text-red-800', icon: '●●●', points: 3 }
     };
 
-    // Composant TaskCard
-    const TaskCard = ({ task, onToggle, onEdit, onDelete }) => {
-      const [showMenu, setShowMenu] = useState(false);
-      const isOverdue = new Date(task.dueDate) < new Date() && !task.completed;
+    function App(){
+      const [state, setState] = useState(()=> load() ?? demo);
+      const [tab, setTab] = useState("tasks");
+      const [showModal, setShowModal] = useState(false);
+      const [editing, setEditing] = useState(null);
+      const [search, setSearch] = useState("");
+      const [filter, setFilter] = useState("all");
 
-      return (
-        <div
-          className={`p-4 mb-3 bg-white rounded-lg shadow-md flex items-center relative transition-transform duration-300 ${
-            task.completed ? 'scale-95 opacity-75' : ''
-          } ${isOverdue ? 'border-l-4 border-red-500' : ''}`}
-        >
-          <input
-            type="checkbox"
-            checked={task.completed}
-            onChange={() => onToggle(task.id)}
-            className="mr-3 h-5 w-5"
-            aria-label={`Marquer ${task.title} comme ${task.completed ? 'non terminé' : 'terminé'}`}
-          />
-          <div className="flex-1">
-            <div className="flex items-center">
-              <span
-                className={`text-sm font-semibold ${categories[task.category].color} mr-2`}
-              >
-                {categories[task.category].emoji}
-              </span>
-              <span className={task.completed ? 'line-through text-gray-500' : ''}>{task.title}</span>
-            </div>
-            {task.description && <p className="text-sm text-gray-600">{task.description}</p>}
-            <div className="text-xs text-gray-400 mt-1">
-              <span>{formatDate(task.dueDate)}</span> • {task.estimatedTime} •{' '}
-              <span className={priorities[task.priority].color}>{priorities[task.priority].indicator}</span>
-              {isOverdue && <span className="text-red-500 ml-2">⚠ En retard</span>}
-            </div>
-          </div>
-          <button
-            onClick={() => setShowMenu(!showMenu)}
-            className="p-2 text-gray-600 hover:text-gray-800"
-            aria-label="Menu des options"
-          >
-            <i data-lucide="more-horizontal" className="w-5 h-5"></i>
-          </button>
-          {showMenu && (
-            <div className="absolute right-2 top-12 bg-white shadow-lg rounded-md p-2 z-10">
-              <button
-                onClick={() => {
-                  onEdit(task);
-                  setShowMenu(false);
-                }}
-                className="block w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-gray-100"
-              >
-                Modifier
-              </button>
-              <button
-                onClick={() => {
-                  onDelete(task.id);
-                  setShowMenu(false);
-                }}
-                className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
-              >
-                Supprimer
-              </button>
-            </div>
-          )}
-        </div>
-      );
-    };
+      useEffect(()=> save(state), [state]);
 
-    // Composant TaskModal
-    const TaskModal = ({ task, onSave, onClose }) => {
-      const [title, setTitle] = useState(task ? task.title : '');
-      const [description, setDescription] = useState(task ? task.description : '');
-      const [category, setCategory] = useState(task ? task.category : 'personnel');
-      const [priority, setPriority] = useState(task ? task.priority : 'low');
-      const [dueDate, setDueDate] = useState(
-        task ? task.dueDate : new Date().toISOString().split('T')[0]
-      );
-      const [estimatedTime, setEstimatedTime] = useState(
-        task ? task.estimatedTime : '15min'
-      );
-      const [error, setError] = useState('');
-
-      const handleSubmit = () => {
-        if (!title.trim()) {
-          setError('Le titre est requis');
-          return;
-        }
-        onSave({
-          id: task ? task.id : Date.now(),
-          title,
-          description,
-          category,
-          priority,
-          dueDate,
-          estimatedTime,
-          completed: task ? task.completed : false,
-          createdAt: task ? task.createdAt : new Date().toISOString(),
-          completedAt: task ? task.completedAt : null,
-        });
-        onClose();
-      };
-
-      return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center sm:items-center z-50">
-          <div className="bg-white w-full max-w-md p-6 rounded-t-lg sm:rounded-lg animate-slide-up">
-            <h2 className="text-xl font-bold mb-4">
-              {task ? 'Modifier la tâche' : 'Nouvelle tâche'}
-            </h2>
-            {error && <p className="text-red-500 mb-2">{error}</p>}
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="Titre de la tâche"
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Titre de la tâche"
-            />
-            <textarea
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="Description (optionnel)"
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              rows="3"
-              aria-label="Description de la tâche"
-            ></textarea>
-            <select
-              value={category}
-              onChange={e => setCategory(e.target.value)}
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Catégorie"
-            >
-              {Object.keys(categories).map(key => (
-                <option key={key} value={key}>
-                  {categories[key].emoji} {categories[key].name}
-                </option>
-              ))}
-            </select>
-            <select
-              value={priority}
-              onChange={e => setPriority(e.target.value)}
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Priorité"
-            >
-              {Object.keys(priorities).map(key => (
-                <option key={key} value={key}>
-                  {priorities[key].name} ({priorities[key].indicator})
-                </option>
-              ))}
-            </select>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={e => setDueDate(e.target.value)}
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Date d'échéance"
-            />
-            <select
-              value={estimatedTime}
-              onChange={e => setEstimatedTime(e.target.value)}
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Temps estimé"
-            >
-              {['15min', '30min', '1h', '2h', '1j', '2j+'].map(time => (
-                <option key={time} value={time}>
-                  {time}
-                </option>
-              ))}
-            </select>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
-                aria-label="Annuler"
-              >
-                Annuler
-              </button>
-              <button
-                onClick={handleSubmit}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                aria-label="Sauvegarder"
-              >
-                Sauvegarder
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    };
-
-    // Composant DailyReviewModal
-    const DailyReviewModal = ({ tasks, onClose }) => {
-      const today = new Date().toISOString().split('T')[0];
-      const todayTasks = tasks.filter(
-        task => task.completed && task.completedAt && task.completedAt.startsWith(today)
-      );
-      const completionCount = todayTasks.length;
-      const totalTasks = tasks.length;
-      const completionPercentage = totalTasks > 0 ? Math.round((completionCount / totalTasks) * 100) : 0;
-
-      const categoryBreakdown = Object.keys(categories)
-        .map(cat => ({
-          name: categories[cat].name,
-          emoji: categories[cat].emoji,
-          count: todayTasks.filter(task => task.category === cat).length,
-        }))
-        .filter(item => item.count > 0);
-
-      const priorityBreakdown = Object.keys(priorities)
-        .map(pri => ({
-          name: priorities[pri].name,
-          count: todayTasks.filter(task => task.priority === pri).length,
-        }))
-        .filter(item => item.count > 0);
-
-      const getMotivationalMessage = () => {
-        if (completionCount >= 5)
-          return { emoji: '🚀', text: 'Incroyable ! Vous êtes en feu aujourd’hui !' };
-        if (completionCount >= 3)
-          return { emoji: '👍', text: 'Super boulot, continuez comme ça !' };
-        return {
-          emoji: '💪',
-          text: 'Chaque tâche compte, vous êtes sur la bonne voie !',
-        };
-      };
-
-      const motivational = getMotivationalMessage();
-
-      return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center sm:items-center z-50">
-          <div className="bg-white w-full max-w-md p-6 rounded-t-lg sm:rounded-lg animate-slide-up">
-            <h2 className="text-xl font-bold mb-4">Récapitulatif de la journée</h2>
-            <p className="text-lg mb-2">
-              {motivational.emoji} {motivational.text}
-            </p>
-            <div className="mb-4">
-              <p>
-                <strong>{completionCount}</strong> tâches terminées aujourd’hui ({completionPercentage}% du
-                total)
-              </p>
-              {categoryBreakdown.length > 0 && (
-                <>
-                  <p className="mt-2 font-semibold">Répartition par catégorie :</p>
-                  <ul className="list-disc pl-5">
-                    {categoryBreakdown.map(cat => (
-                      <li key={cat.name}>
-                        {cat.emoji} {cat.name}: {cat.count}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              {priorityBreakdown.length > 0 && (
-                <>
-                  <p className="mt-2 font-semibold">Répartition par priorité :</p>
-                  <ul className="list-disc pl-5">
-                    {priorityBreakdown.map(pri => (
-                      <li key={pri.name}>
-                        {pri.name}: {pri.count}
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-              {todayTasks.length > 0 && (
-                <>
-                  <p className="mt-2 font-semibold">Tâches accomplies :</p>
-                  <ul className="space-y-2">
-                    {todayTasks.map(task => (
-                      <li key={task.id} className="text-sm">
-                        {categories[task.category].emoji} {task.title} ({priorities[task.priority].name})
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-            </div>
-            <button
-              onClick={onClose}
-              className="w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-              aria-label="Fermer"
-            >
-              Fermer
-            </button>
-          </div>
-        </div>
-      );
-    };
-
-    // Modal pour inviter un ami
-    const InviteFriendModal = ({ onSave, onClose }) => {
-      const [name, setName] = useState('');
-      return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center sm:items-center z-50">
-          <div className="bg-white w-full max-w-md p-6 rounded-t-lg sm:rounded-lg animate-slide-up">
-            <h2 className="text-xl font-bold mb-4">Inviter un ami</h2>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="Nom de votre ami"
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
-              >
-                Annuler
-              </button>
-              <button
-                onClick={() => {
-                  if (name.trim()) {
-                    onSave(name.trim());
-                    setName('');
-                  }
-                }}
-                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-              >
-                Inviter
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    };
-
-    // Modal pour le tableau de bord comparatif
-    const LeaderboardModal = ({ friends, onClose }) => {
-      // Trier par points décroissants
-      const sorted = [...friends].sort((a, b) => b.points - a.points);
-      return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center sm:items-center z-50">
-          <div className="bg-white w-full max-w-md p-6 rounded-t-lg sm:rounded-lg animate-slide-up">
-            <h2 className="text-xl font-bold mb-4">Tableau de bord comparatif</h2>
-            <table className="w-full">
-              <thead>
-                <tr className="text-left">
-                  <th className="pb-2">Joueur</th>
-                  <th className="pb-2">Tâches</th>
-                  <th className="pb-2">Flammes</th>
-                  <th className="pb-2">Points</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((f, index) => (
-                  <tr key={f.id} className="border-t">
-                    <td className="py-1">
-                      {index === 0 ? '🏆 ' : ''}
-                      {f.name}
-                    </td>
-                    <td className="py-1">{f.tasksCompleted}</td>
-                    <td className="py-1">{Array(f.streak).fill('🔥').join('')}</td>
-                    <td className="py-1">{f.points}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button
-              onClick={onClose}
-              className="mt-4 w-full px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-            >
-              Fermer
-            </button>
-          </div>
-        </div>
-      );
-    };
-
-    // Calcul du nombre de jours consécutifs avec des tâches terminées
-    const calculateStreak = tasks => {
-      let streak = 0;
-      const now = new Date();
-      // Examiner les 30 derniers jours
-      for (let i = 0; i < 30; i++) {
-        const day = new Date(now);
-        day.setDate(now.getDate() - i);
-        const dayStr = day.toISOString().split('T')[0];
-        const dayTasks = tasks.filter(
-          t => t.completed && t.completedAt && t.completedAt.startsWith(dayStr)
-        );
-        if (dayTasks.length > 0) {
-          streak++;
-        } else {
-          break;
-        }
-      }
-      return streak;
-    };
-
-    // Formatage intelligent des dates
-    const formatDate = dateStr => {
-      const today = new Date();
-      const tomorrow = new Date(today);
-      tomorrow.setDate(today.getDate() + 1);
-      const date = new Date(dateStr);
-      if (date.toDateString() === today.toDateString()) return 'Aujourd’hui';
-      if (date.toDateString() === tomorrow.toDateString()) return 'Demain';
-      return date.toLocaleDateString('fr-FR');
-    };
-
-    // Composant principal TaskTrackerApp
-    const TaskTrackerApp = () => {
-      const [tasks, setTasks] = useState([]);
-      const [filter, setFilter] = useState('all');
-      const [search, setSearch] = useState('');
-      const [showTaskModal, setShowTaskModal] = useState(false);
-      const [editingTask, setEditingTask] = useState(null);
-      const [showReviewModal, setShowReviewModal] = useState(false);
-
-      // États supplémentaires pour le mode collaboratif
-      const [friends, setFriends] = useState([
-        { id: 'user', name: 'Vous', tasksCompleted: 0, streak: 0, points: 0 },
-      ]);
-      const [showInviteModal, setShowInviteModal] = useState(false);
-      const [showLeaderboardModal, setShowLeaderboardModal] = useState(false);
-
-      // Initialiser les icônes Lucide
-      useEffect(() => {
-        // Utiliser l'instance globale `lucide` fournie par le bundle UMD
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons();
-        }
-      }, []);
-
-      // Mettre à jour les icônes Lucide lorsque des modales apparaissent ou lorsque les tâches changent
-      useEffect(() => {
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons();
-        }
-      }, [showInviteModal, showLeaderboardModal, tasks]);
-
-      // Calcul des statistiques
-      const today = new Date().toISOString().split('T')[0];
-      const stats = {
-        total: tasks.length,
-        completed: tasks.filter(task => task.completed).length,
-        pending: tasks.filter(task => !task.completed).length,
-        overdue: tasks.filter(task => !task.completed && new Date(task.dueDate) < new Date()).length,
-        todayCompleted: tasks.filter(
-          task => task.completed && task.completedAt && task.completedAt.startsWith(today)
-        ).length,
-      };
-
-      // Calcul des performances de l'utilisateur
-      const userCompleted = stats.completed;
-      const userStreak = calculateStreak(tasks);
-      const userPoints = userCompleted * 10 + userStreak * 5;
-      // Mettre à jour l'utilisateur dans la liste des amis dès que ses stats changent
-      useEffect(() => {
-        setFriends(prev => {
-          const others = prev.filter(f => f.id !== 'user');
-          return [
-            { id: 'user', name: 'Vous', tasksCompleted: userCompleted, streak: userStreak, points: userPoints },
-            ...others,
-          ];
-        });
-      }, [userCompleted, userStreak, userPoints]);
-
-      // Fonction pour inviter un ami avec des statistiques fictives
-      const inviteFriend = name => {
-        const newFriend = {
-          id: Date.now().toString(),
-          name,
-          tasksCompleted: Math.floor(Math.random() * 5) + 1,
-          streak: Math.floor(Math.random() * 3),
-          points: Math.floor(Math.random() * 50) + 10,
-        };
-        setFriends(prev => [...prev, newFriend]);
-        setShowInviteModal(false);
-      };
-
-      // Filtrage des tâches
-      const filteredTasks = tasks.filter(task => {
-        const matchesSearch =
-          task.title.toLowerCase().includes(search.toLowerCase()) ||
-          (task.description && task.description.toLowerCase().includes(search.toLowerCase()));
-        if (!matchesSearch) return false;
-        if (filter === 'completed') return task.completed;
-        if (filter === 'pending') return !task.completed;
-        if (filter === 'today') return task.dueDate === today;
-        if (filter === 'overdue') return !task.completed && new Date(task.dueDate) < new Date();
+      const stats = getStats(state.tasks);
+      const leaderboard = getLeaderboard(state);
+      const filtered = state.tasks.filter(t => {
+        const q = (t.title + " " + (t.description||"")).toLowerCase();
+        if(!q.includes(search.toLowerCase())) return false;
+        const today = new Date().toISOString().slice(0,10);
+        if(filter==="completed") return t.completed;
+        if(filter==="pending") return !t.completed;
+        if(filter==="today") return t.dueDate===today;
+        if(filter==="overdue") return t.dueDate && t.dueDate < today && !t.completed;
         return true;
       });
 
-      // Gestion des actions sur les tâches
-      const addOrUpdateTask = task => {
-        if (task.id) {
-          setTasks(tasks.map(t => (t.id === task.id ? task : t)));
-        } else {
-          setTasks([...tasks, task]);
+      function addOrUpdate(task){
+        if(editing){
+          setState(s=>({...s, tasks: s.tasks.map(x=> x.id===editing.id? {...editing, ...task}: x)}));
+          setEditing(null);
+        }else{
+          const id = Date.now();
+          setState(s=>({...s, tasks: [{id, completed:false, createdAt:new Date().toISOString(), ...task}, ...s.tasks]}));
         }
-        setShowTaskModal(false);
-        setEditingTask(null);
-      };
+        setShowModal(false);
+      }
 
-      const toggleTask = id => {
-        setTasks(
-          tasks.map(task => {
-            if (task.id === id) {
-              return {
-                ...task,
-                completed: !task.completed,
-                completedAt: !task.completed ? new Date().toISOString() : null,
-              };
-            }
-            return task;
-          })
-        );
-      };
+      function toggle(t){
+        setState(s=>({...s, tasks: s.tasks.map(x=> x.id===t.id? {...x, completed: !x.completed, completedAt: !x.completed? new Date().toISOString(): null }: x)}));
+        if(!t.completed){
+          const pts = scoreTask(t);
+          setState(s=>({...s, currentUser:{...s.currentUser, totalPoints: s.currentUser.totalPoints + pts, level: userLevel(s.currentUser.totalPoints + pts)}}));
+        }
+      }
 
-      const deleteTask = id => {
-        setTasks(tasks.filter(task => task.id !== id));
-      };
+      function remove(t){ setState(s=>({...s, tasks: s.tasks.filter(x=>x.id!==t.id)})); }
 
-      // État vide
-      const EmptyState = () => (
-        <div className="text-center py-8">
-          <i data-lucide="inbox" className="w-16 h-16 text-gray-400 mx-auto mb-4"></i>
-          <p className="text-lg text-gray-600">Aucune tâche pour le moment</p>
-          <p className="text-sm text-gray-400">
-            Ajoutez une tâche pour commencer votre journée ! 🚀
-          </p>
-        </div>
-      );
+      function exportJSON(){
+        const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a"); a.href=url; a.download="taskmaster_export.json"; a.click(); URL.revokeObjectURL(url);
+      }
+      function importJSON(e){
+        const f = e.target.files?.[0]; if(!f) return;
+        const r = new FileReader(); r.onload=()=>{ try{ setState(JSON.parse(r.result)); }catch(_){ alert("JSON invalide"); } }; r.readAsText(f);
+      }
 
       return (
-        <div className="min-h-screen bg-gray-100">
-          {/* Header sticky */}
-          <div className="sticky top-0 bg-blue-500 text-white p-4 shadow-md z-10">
-            <h1 className="text-xl font-bold text-center">Suivi de Tâches</h1>
-          </div>
-
-          {/* Statistiques */}
-          <div className="p-4 grid grid-cols-3 gap-2 sm:grid-cols-5">
-            {[
-              { label: 'Total', value: stats.total },
-              { label: 'Terminées', value: stats.completed },
-              { label: 'En cours', value: stats.pending },
-              { label: 'En retard', value: stats.overdue },
-              { label: 'Aujourd’hui', value: stats.todayCompleted },
-            ].map(stat => (
-              <div key={stat.label} className="bg-white p-3 rounded-lg shadow text-center">
-                <p className="text-sm text-gray-600">{stat.label}</p>
-                <p className="text-lg font-bold">{stat.value}</p>
+        <div className="h-full flex flex-col">
+          <header className="bg-white border-b sticky top-0 z-10">
+            <div className="max-w-5xl mx-auto p-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">🔥</span>
+                <h1 className="font-bold">TaskMaster</h1>
+                <div className="ml-2 text-sm text-gray-500">Streak: {state.currentUser.streak} • Points: <span className="font-semibold">{state.currentUser.totalPoints}</span> • Niveau {state.currentUser.level}</div>
               </div>
-            ))}
-          </div>
-
-          {/* Recherche et filtres */}
-          <div className="p-4">
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Rechercher une tâche..."
-              className="w-full p-2 mb-3 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              aria-label="Rechercher une tâche"
-            />
-            <div className="flex flex-wrap gap-2">
-              {['all', 'pending', 'completed', 'today', 'overdue'].map(f => (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`px-3 py-1 rounded text-sm ${
-                    filter === f ? 'bg-blue-500 text-white' : 'bg-gray-200'
-                  }`}
-                  aria-label={`Filtrer par ${f}`}
-                >
-                  {f === 'all'
-                    ? 'Toutes'
-                    : f === 'pending'
-                    ? 'En cours'
-                    : f === 'completed'
-                    ? 'Terminées'
-                    : f === 'today'
-                    ? 'Aujourd’hui'
-                    : 'En retard'}
+              <div className="flex items-center gap-2">
+                <input className="px-3 py-2 border rounded-lg" placeholder="Recherche..." value={search} onChange={e=>setSearch(e.target.value)} />
+                <label className="px-3 py-2 border rounded-lg cursor-pointer">
+                  Importer
+                  <input type="file" className="hidden" accept="application/json" onChange={importJSON} />
+                </label>
+                <button className="px-3 py-2 border rounded-lg" onClick={exportJSON}>Exporter</button>
+                <button className="px-3 py-2 border rounded-lg" onclick="">
+                  <span id="installPWA">Installer</span>
+                </button>
+              </div>
+            </div>
+            <nav className="max-w-5xl mx-auto px-3 pb-3 flex gap-2">
+              {["tasks","competition","friends"].map(k=>(
+                <button key={k} onClick={()=>setTab(k)} className={"px-3 py-2 rounded-lg " + (tab===k?"bg-blue-600 text-white":"bg-gray-100 text-gray-700")}>
+                  {k==="tasks"?"Mes tâches":k==="competition"?"Compétition":"Amis"}
                 </button>
               ))}
-            </div>
-          </div>
+            </nav>
+          </header>
 
-          {/* Liste des tâches */}
-          <div className="p-4">
-            {filteredTasks.length === 0 ? (
-              <EmptyState />
-            ) : (
-              filteredTasks.map(task => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  onToggle={toggleTask}
-                  onEdit={setEditingTask}
-                  onDelete={deleteTask}
-                />
-              ))
+          <main className="max-w-5xl mx-auto p-3 flex-1 w-full">
+            {tab==="tasks" && (
+              <div>
+                <div className="grid grid-cols-5 gap-2 mb-3">
+                  <Stat label="Total" value={stats.total} color="text-blue-600 bg-blue-50" />
+                  <Stat label="Terminées" value={stats.completed} color="text-green-600 bg-green-50" />
+                  <Stat label="En cours" value={stats.pending} color="text-yellow-600 bg-yellow-50" />
+                  <Stat label="En retard" value={stats.overdue} color="text-red-600 bg-red-50" />
+                  <Stat label="Points" value={stats.totalPoints} color="text-purple-600 bg-purple-50" />
+                </div>
+
+                <div className="flex gap-2 mb-3 overflow-x-auto">
+                  {[["all","Toutes"],["pending","En cours"],["completed","Terminées"],["today","Aujourd'hui"],["overdue","En retard"]].map(([k,lab])=>(
+                    <button key={k} onClick={()=>setFilter(k)} className={"px-3 py-2 rounded-full text-sm whitespace-nowrap "+(filter===k?"bg-blue-600 text-white":"bg-gray-100 text-gray-700")}>{lab}</button>
+                  ))}
+                </div>
+
+                <div className="space-y-2">
+                  {filtered.map(t=>(
+                    <TaskCard key={t.id} t={t} onToggle={()=>toggle(t)} onDelete={()=>remove(t)} onEdit={()=>{ setEditing(t); setShowModal(true); }} />
+                  ))}
+                </div>
+
+                <button onClick={()=>{ setEditing(null); setShowModal(true); }} className="fixed bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg">+</button>
+              </div>
             )}
-          </div>
 
-          {/* Bouton flottant pour ajouter une tâche */}
-          <button
-            onClick={() => setShowTaskModal(true)}
-            className="fixed bottom-6 right-6 bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-transform duration-200"
-            aria-label="Ajouter une tâche"
-          >
-            <i data-lucide="plus" className="w-6 h-6"></i>
-          </button>
+            {tab==="competition" && (
+              <div className="space-y-3">
+                <div className="bg-white border rounded-xl p-4">
+                  <h2 className="font-semibold mb-3">Classement</h2>
+                  <div className="space-y-2">
+                    {leaderboard.map((u,i)=>(
+                      <div key={u.id} className={"flex items-center justify-between p-2 rounded-lg "+(u.id===state.currentUser.id?"bg-blue-50 border-2 border-blue-200":"bg-gray-50")}>
+                        <div className="flex items-center gap-3">
+                          <div className={"w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold "+(i===0?"bg-yellow-400":i===1?"bg-gray-300":i===2?"bg-orange-400":"bg-gray-200")}>{i<3?["🥇","🥈","🥉"][i]:i+1}</div>
+                          <div className="text-2xl">{u.avatar}</div>
+                          <div className="font-medium">{u.name}{u.id===state.currentUser.id && <span className="text-blue-600 ml-1">(Vous)</span>}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-lg text-purple-600">{u.totalPoints}</div>
+                          <div className="text-xs text-gray-500">points</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-white border rounded-xl p-4">
+                  <h2 className="font-semibold mb-3">Défis du jour</h2>
+                  <ul className="space-y-2">
+                    <li className="flex items-center justify-between bg-blue-50 p-3 rounded-lg"><span>🎯 Terminer 5 tâches</span><span>+10 pts</span></li>
+                    <li className="flex items-center justify-between bg-blue-50 p-3 rounded-lg"><span>⚡ Maintenir votre série</span><span>+5 pts</span></li>
+                    <li className="flex items-center justify-between bg-blue-50 p-3 rounded-lg"><span>👑 Battre votre record</span><span>+15 pts</span></li>
+                  </ul>
+                </div>
+              </div>
+            )}
 
-          {/* Bouton Valider ma journée */}
-          {stats.todayCompleted > 0 && (
-            <button
-              onClick={() => setShowReviewModal(true)}
-              className="fixed bottom-20 right-6 bg-green-500 text-white p-4 rounded-full shadow-lg hover:bg-green-600 transition-transform duration-200"
-              aria-label="Valider ma journée"
-            >
-              <i data-lucide="check-circle" className="w-6 h-6"></i>
-            </button>
-          )}
+            {tab==="friends" && (
+              <div className="space-y-3">
+                <button className="w-full bg-gradient-to-r from-green-500 to-blue-600 text-white p-3 rounded-xl">Inviter un ami</button>
+                <div className="space-y-2">
+                  {state.friends.map(f=>(
+                    <div key={f.id} className="bg-white border rounded-xl p-3 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="text-3xl">{f.avatar}</div>
+                        <div>
+                          <div className="font-medium">{f.name}</div>
+                          <div className="text-xs text-gray-500">{f.email}</div>
+                        </div>
+                      </div>
+                      <div className="text-right text-sm">
+                        <div>🔥 {f.streak}</div>
+                        <div className="text-purple-600 font-semibold">{f.totalPoints} pts</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </main>
 
-          {/* Boutons collaboration : inviter et classement */}
-          <div className="fixed bottom-36 right-6 flex flex-col gap-3">
-            <button
-              onClick={() => setShowInviteModal(true)}
-              className="bg-purple-500 text-white p-4 rounded-full shadow-lg hover:bg-purple-600 transition-transform duration-200"
-              aria-label="Inviter un ami"
-            >
-              <i data-lucide="user-plus" className="w-6 h-6"></i>
-            </button>
-            <button
-              onClick={() => setShowLeaderboardModal(true)}
-              className="bg-yellow-500 text-white p-4 rounded-full shadow-lg hover:bg-yellow-600 transition-transform duration-200"
-              aria-label="Tableau de bord"
-            >
-              <i data-lucide="bar-chart-2" className="w-6 h-6"></i>
-            </button>
-          </div>
+          <footer className="text-center text-xs text-gray-500 p-3">PWA • Offline • Import/Export JSON</footer>
 
-          {/* Modales */}
-          {showTaskModal && (
+          {showModal && (
             <TaskModal
-              task={editingTask}
-              onSave={addOrUpdateTask}
-              onClose={() => {
-                setShowTaskModal(false);
-                setEditingTask(null);
-              }}
+              initial={editing || { title:"", description:"", priority:"medium", category:"personnel", dueDate:"", estimatedTime:"" }}
+              onClose={()=>{ setShowModal(false); setEditing(null); }}
+              onSave={addOrUpdate}
             />
-          )}
-          {showReviewModal && (
-            <DailyReviewModal tasks={tasks} onClose={() => setShowReviewModal(false)} />
-          )}
-          {showInviteModal && (
-            <InviteFriendModal onSave={inviteFriend} onClose={() => setShowInviteModal(false)} />
-          )}
-          {showLeaderboardModal && (
-            <LeaderboardModal friends={friends} onClose={() => setShowLeaderboardModal(false)} />
           )}
         </div>
       );
-    };
+    }
 
-    // Rendu de l'application
-    const root = ReactDOM.createRoot(document.getElementById('root'));
-    root.render(<TaskTrackerApp />);
+    function Stat({label, value, color}){
+      return (
+        <div className={"text-center p-2 rounded-lg "+color}>
+          <div className="text-lg font-bold">{value}</div>
+          <div className="text-xs">{label}</div>
+        </div>
+      );
+    }
+
+    function TaskCard({t, onToggle, onDelete, onEdit}){
+      const p = priorities[t.priority] || priorities.medium;
+      const c = categories[t.category] || categories.personnel;
+      const overdue = t.dueDate && t.dueDate < new Date().toISOString().slice(0,10) && !t.completed;
+      return (
+        <div className={"bg-white border rounded-xl p-3 shadow-sm "+(t.completed?"opacity-75 bg-gray-50":"")+(overdue?" border-red-200 bg-red-50":" border-gray-200")}>
+          <div className="flex items-start gap-3">
+            <button onClick={onToggle} className={"w-6 h-6 rounded-full border-2 flex items-center justify-center mt-1 "+(t.completed?"bg-green-500 border-green-500":"border-gray-300")}>
+              {t.completed && <span style={{fontSize:"12px"}}>✓</span>}
+            </button>
+            <div className="flex-1">
+              <div className="flex justify-between">
+                <div>
+                  <div className={"font-medium "+(t.completed?"line-through text-gray-500":"")}>{t.title}</div>
+                  {t.description && <div className={"text-sm "+(t.completed?"text-gray-400":"text-gray-600")}>{t.description}</div>}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {t.dueDate && ("🗓 "+formatDate(t.dueDate))}
+                </div>
+              </div>
+              <div className="flex gap-2 mt-2 flex-wrap">
+                <span className={"px-2 py-1 rounded-full text-xs font-medium text-white "+c.color}>{c.emoji} {c.label}</span>
+                <span className={"px-2 py-1 rounded-full text-xs font-medium "+p.color}>{p.icon} {p.label} (+{p.points}pts)</span>
+              </div>
+              <div className="flex gap-2 mt-3">
+                <button onClick={onEdit} className="px-2 py-1 text-xs border rounded-lg">Modifier</button>
+                <button onClick={onDelete} className="px-2 py-1 text-xs border rounded-lg text-red-600">Supprimer</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function TaskModal({initial, onClose, onSave}){
+      const [task, setTask] = useState(initial);
+      const today = new Date().toISOString().slice(0,10);
+      return (
+        <div className="fixed inset-0 bg-black/50 flex items-end z-50">
+          <div className="bg-white w-full rounded-t-2xl p-4">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h2 className="font-semibold">Tâche</h2>
+              <button onClick={onClose}>✕</button>
+            </div>
+            <div className="grid gap-3 py-3">
+              <input className="px-3 py-2 border rounded-lg" placeholder="Titre *" value={task.title} onChange={e=>setTask({...task, title:e.target.value})} />
+              <textarea className="px-3 py-2 border rounded-lg" rows="3" placeholder="Description" value={task.description||""} onChange={e=>setTask({...task, description:e.target.value})}></textarea>
+              <div className="grid grid-cols-2 gap-3">
+                <select className="px-3 py-2 border rounded-lg" value={task.category} onChange={e=>setTask({...task, category:e.target.value})}>
+                  {Object.entries(categories).map(([k,v])=>(<option key={k} value={k}>{v.emoji} {v.label}</option>))}
+                </select>
+                <select className="px-3 py-2 border rounded-lg" value={task.priority} onChange={e=>setTask({...task, priority:e.target.value})}>
+                  {Object.entries(priorities).map(([k,v])=>(<option key={k} value={k}>{v.icon} {v.label} (+{v.points}pts)</option>))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <input type="date" className="px-3 py-2 border rounded-lg" min={today} value={task.dueDate||""} onChange={e=>setTask({...task, dueDate:e.target.value})} />
+                <input className="px-3 py-2 border rounded-lg" placeholder="Temps estimé (ex: 30min)" value={task.estimatedTime||""} onChange={e=>setTask({...task, estimatedTime:e.target.value})} />
+              </div>
+            </div>
+            <div className="flex gap-3 border-t pt-3">
+              <button className="flex-1 px-3 py-2 border rounded-lg" onClick={onClose}>Annuler</button>
+              <button className="flex-1 px-3 py-2 rounded-lg text-white bg-blue-600 disabled:opacity-50" disabled={!task.title?.trim()} onClick={()=>onSave(task)}>Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Utils
+    function formatDate(s){ const d=new Date(s); return d.toLocaleDateString('fr-FR',{weekday:'short',month:'short',day:'numeric'}); }
+    function scoreTask(t){
+      let p = (priorities[t.priority]?.points)||1;
+      if(t.dueDate && t.completedAt){
+        const due = new Date(t.dueDate); const comp = new Date(t.completedAt);
+        if(comp <= due) p += 1;
+        const h = comp.getHours(); if(h<8) p+=1; if(h>22) p+=1;
+      }
+      return p;
+    }
+    function getStats(tasks){
+      const total = tasks.length;
+      const completed = tasks.filter(t=>t.completed).length;
+      const overdue = tasks.filter(t=>t.dueDate && t.dueDate < new Date().toISOString().slice(0,10) && !t.completed).length;
+      const totalPoints = tasks.filter(t=>t.completed).reduce((s,t)=> s+scoreTask(t), 0);
+      return { total, completed, overdue, pending: total-completed, totalPoints };
+    }
+    function userLevel(points){ if(points<50) return 1; if(points<150) return 2; if(points<300) return 3; if(points<500) return 4; return 5; }
+    function getLeaderboard(state){
+      const users = [state.currentUser, ...state.friends.filter(f=>f.status==="active")];
+      return users.sort((a,b)=> b.totalPoints - a.totalPoints);
+    }
+
+    // Render
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+
+    // PWA install prompt
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferredPrompt = e; document.getElementById('installPWA').onclick = async ()=>{ if(deferredPrompt){ deferredPrompt.prompt(); deferredPrompt=null; } else alert("Sur mobile : menu → Ajouter à l'écran d'accueil"); }; });
+  </script>
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js');
+      });
+    }
   </script>
 </body>
 </html>

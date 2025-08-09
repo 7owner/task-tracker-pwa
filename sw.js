@@ -1,31 +1,24 @@
-/*
- * Service worker for offline caching.
- * It caches core assets on installation and serves them from cache when offline.
- */
-
-const CACHE_NAME = 'task-tracker-cache-v1';
-const urlsToCache = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/icon-192.png',
-  '/icon-512.png',
-  // External scripts required by the app
-  'https://cdn.tailwindcss.com',
-  'https://cdn.jsdelivr.net/npm/react@18.2.0/umd/react.development.js',
-  'https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.development.js',
-  'https://cdn.jsdelivr.net/npm/babel-standalone@7.24.7/babel.min.js',
-  'https://unpkg.com/lucide@0.441.0/dist/umd/lucide.min.js'
+const CACHE = "taskmaster-v2";
+const ASSETS = [
+  "./",
+  "./index.html",
+  "./manifest.json",
+  "./manifest.webmanifest",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png"
 ];
-
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
-  );
+self.addEventListener("install", (e)=>{
+  e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting()));
 });
-
-self.addEventListener('fetch', event => {
-  event.respondWith(
-    caches.match(event.request).then(response => response || fetch(event.request))
-  );
+self.addEventListener("activate", (e)=>{
+  e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))))
+  self.clients.claim();
+});
+self.addEventListener("fetch", (e)=>{
+  const req = e.request;
+  if (req.mode === "navigate") {
+    e.respondWith(fetch(req).catch(()=>caches.match("./index.html")));
+    return;
+  }
+  e.respondWith(caches.match(req).then(r=> r || fetch(req)));
 });

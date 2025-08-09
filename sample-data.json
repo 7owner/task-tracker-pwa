@@ -1,0 +1,52 @@
+{
+  "currentUser": {
+    "id": 0,
+    "name": "Moi",
+    "avatar": "😊",
+    "streak": 5,
+    "totalPoints": 100,
+    "level": 2
+  },
+  "friends": [
+    {
+      "id": 1,
+      "name": "Marie",
+      "email": "marie@example.com",
+      "avatar": "👩",
+      "streak": 7,
+      "totalPoints": 180,
+      "status": "active"
+    },
+    {
+      "id": 2,
+      "name": "Thomas",
+      "email": "thomas@example.com",
+      "avatar": "👨",
+      "streak": 2,
+      "totalPoints": 60,
+      "status": "active"
+    }
+  ],
+  "tasks": [
+    {
+      "id": 101,
+      "title": "Lire 10 pages",
+      "description": "Habitude",
+      "priority": "low",
+      "category": "loisirs",
+      "dueDate": "",
+      "completed": false,
+      "createdAt": "2025-08-01T09:00:00Z"
+    },
+    {
+      "id": 102,
+      "title": "TOEIC - Listening",
+      "description": "30 min",
+      "priority": "medium",
+      "category": "personnel",
+      "dueDate": "2025-08-15",
+      "completed": false,
+      "createdAt": "2025-08-01T10:00:00Z"
+    }
+  ]
+}
