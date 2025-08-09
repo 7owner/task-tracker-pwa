@@ -1,348 +1,500 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#2563eb" />
-  <title>TaskMaster • Suivi & Défis</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="manifest" href="manifest.webmanifest">
-  <link rel="icon" href="./icons/icon-192.png">
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="theme-color" content="#2563eb"/>
+  <title>TaskMaster Social</title>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="manifest" href="manifest.webmanifest"/>
+  <link rel="icon" href="./icons/icon-192.png"/>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>html,body,#root{height:100%}</style>
-
-  <!-- React -->
+  <!-- React and Babel via CDN for simplicity. In production you should bundle with a build tool. -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>html,body,#root{height:100%}</style>
 </head>
 <body class="bg-gray-50">
   <div id="root"></div>
-
   <script type="text/babel">
-    const { useState, useEffect } = React;
-    const STORAGE_KEY = "taskmaster_v1";
+    // Key for localStorage
+    const STORAGE_KEY = "taskmaster_social_v1";
 
-    // Load/Save helpers
-    const load = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || null; } catch(e){ return null; } };
-    const save = (state) => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-
-    // Default demo state
-    const demo = {
-      currentUser: { id: 0, name: "Moi", avatar: "😊", streak: 3, totalPoints: 42, level: 2 },
-      friends: [
-        { id: 1, name: "Marie", email: "marie@example.com", avatar: "👩", streak: 5, totalPoints: 120, status: "active" },
-        { id: 2, name: "Thomas", email: "thomas@example.com", avatar: "👨", streak: 2, totalPoints: 60, status: "active" },
-      ],
-      tasks: [
-        { id: 1, title: "Réviser magnétostriction", description:"20 min", priority:"high", category:"personnel", dueDate: new Date().toISOString().slice(0,10), completed:false, createdAt:new Date().toISOString() },
-        { id: 2, title: "Course 30 min", description:"Cardio", priority:"medium", category:"sante", dueDate: "", completed:false, createdAt:new Date().toISOString() },
-      ]
+    // Default state structure used when nothing exists in localStorage
+    const defaultState = {
+      me: null,       // current user id
+      profiles: [],   // list of user profiles {id, name, avatar, points, level}
+      objectives: [], // list of objectives {id, ownerId, title, metric, target, deadline, progress}
+      tasks: [],      // list of tasks {id, ownerId, objectiveId, title, desc, priority, dueDate, completed, completedAt}
+      cheers: [],     // encouragements {id, toUserId, fromUserId, message, createdAt, type}
+      journal: {}     // journal entries keyed by date { [ymd]: { ownerId, mood, note, comments: [] } }
     };
 
-    const categories = {
-      personnel: { label: 'Personnel', color: 'bg-blue-500', emoji: '👤' },
-      travail: { label: 'Travail', color: 'bg-purple-500', emoji: '💼' },
-      shopping: { label: 'Shopping', color: 'bg-green-500', emoji: '🛒' },
-      sante: { label: 'Santé', color: 'bg-red-500', emoji: '❤️' },
-      loisirs: { label: 'Loisirs', color: 'bg-orange-500', emoji: '🎨' }
-    };
-    const priorities = {
-      low: { label: 'Faible', color: 'bg-green-100 text-green-800', icon: '●', points: 1 },
-      medium: { label: 'Moyenne', color: 'bg-yellow-100 text-yellow-800', icon: '●●', points: 2 },
-      high: { label: 'Élevée', color: 'bg-red-100 text-red-800', icon: '●●●', points: 3 }
-    };
+    // Helper: compute user level based on total points. Defined once to avoid duplication.
+    function getUserLevel(points) {
+      if (points < 50) return 1;
+      if (points < 150) return 2;
+      if (points < 300) return 3;
+      if (points < 500) return 4;
+      return 5;
+    }
 
-    function App(){
-      const [state, setState] = useState(()=> load() ?? demo);
-      const [tab, setTab] = useState("tasks");
-      const [showModal, setShowModal] = useState(false);
-      const [editing, setEditing] = useState(null);
-      const [search, setSearch] = useState("");
-      const [filter, setFilter] = useState("all");
+    // Helper: calculate points earned when completing a task
+    function calculatePoints(task) {
+      // Base on priority: low=1, med=2, high=3
+      const priorityPoints = { low: 1, med: 2, high: 3 };
+      let pts = priorityPoints[task.priority] || 1;
+      if (task.dueDate && task.completedAt) {
+        const due = new Date(task.dueDate);
+        const comp = new Date(task.completedAt);
+        // Bonus if completed on or before due date
+        if (comp <= due) pts += 1;
+        const hour = comp.getHours();
+        // Bonus for early or late completion
+        if (hour < 8) pts += 1;
+        if (hour > 22) pts += 1;
+      }
+      return pts;
+    }
 
-      useEffect(()=> save(state), [state]);
-
-      const stats = getStats(state.tasks);
-      const leaderboard = getLeaderboard(state);
-      const filtered = state.tasks.filter(t => {
-        const q = (t.title + " " + (t.description||"")).toLowerCase();
-        if(!q.includes(search.toLowerCase())) return false;
-        const today = new Date().toISOString().slice(0,10);
-        if(filter==="completed") return t.completed;
-        if(filter==="pending") return !t.completed;
-        if(filter==="today") return t.dueDate===today;
-        if(filter==="overdue") return t.dueDate && t.dueDate < today && !t.completed;
-        return true;
+    // Custom hook: load state from localStorage and persist on changes
+    function useAppState() {
+      const [state, setState] = React.useState(() => {
+        try {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            // merge saved with default to fill missing keys
+            return { ...defaultState, ...parsed };
+          }
+        } catch (e) {
+          console.warn('Failed to parse stored state:', e);
+        }
+        return { ...defaultState };
       });
-
-      function addOrUpdate(task){
-        if(editing){
-          setState(s=>({...s, tasks: s.tasks.map(x=> x.id===editing.id? {...editing, ...task}: x)}));
-          setEditing(null);
-        }else{
-          const id = Date.now();
-          setState(s=>({...s, tasks: [{id, completed:false, createdAt:new Date().toISOString(), ...task}, ...s.tasks]}));
+      React.useEffect(() => {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        } catch (e) {
+          console.warn('Failed to store state:', e);
         }
-        setShowModal(false);
-      }
+      }, [state]);
+      return [state, setState];
+    }
 
-      function toggle(t){
-        setState(s=>({...s, tasks: s.tasks.map(x=> x.id===t.id? {...x, completed: !x.completed, completedAt: !x.completed? new Date().toISOString(): null }: x)}));
-        if(!t.completed){
-          const pts = scoreTask(t);
-          setState(s=>({...s, currentUser:{...s.currentUser, totalPoints: s.currentUser.totalPoints + pts, level: userLevel(s.currentUser.totalPoints + pts)}}));
-        }
-      }
-
-      function remove(t){ setState(s=>({...s, tasks: s.tasks.filter(x=>x.id!==t.id)})); }
-
-      function exportJSON(){
-        const blob = new Blob([JSON.stringify(state,null,2)], {type:"application/json"});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a"); a.href=url; a.download="taskmaster_export.json"; a.click(); URL.revokeObjectURL(url);
-      }
-      function importJSON(e){
-        const f = e.target.files?.[0]; if(!f) return;
-        const r = new FileReader(); r.onload=()=>{ try{ setState(JSON.parse(r.result)); }catch(_){ alert("JSON invalide"); } }; r.readAsText(f);
-      }
-
+    // Profile creation wizard component
+    function ProfileWizard({ onCreate }) {
+      const [name, setName] = React.useState('');
+      const [avatar, setAvatar] = React.useState('😊');
+      const [goalTitle, setGoalTitle] = React.useState('');
+      const [metric, setMetric] = React.useState('tâches');
+      const [target, setTarget] = React.useState(10);
+      const [deadline, setDeadline] = React.useState('');
       return (
-        <div className="h-full flex flex-col">
-          <header className="bg-white border-b sticky top-0 z-10">
-            <div className="max-w-5xl mx-auto p-3 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">🔥</span>
-                <h1 className="font-bold">TaskMaster</h1>
-                <div className="ml-2 text-sm text-gray-500">Streak: {state.currentUser.streak} • Points: <span className="font-semibold">{state.currentUser.totalPoints}</span> • Niveau {state.currentUser.level}</div>
+        <div className="h-full flex items-center justify-center p-4">
+          <div className="bg-white border rounded-2xl max-w-lg w-full p-6 space-y-4">
+            <h1 className="text-xl font-bold">Créer mon profil</h1>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="col-span-3">
+                <label className="text-sm text-gray-600">Nom</label>
+                <input className="w-full border rounded-lg px-3 py-2" value={name} onChange={e=>setName(e.target.value)} placeholder="Ton nom"/>
               </div>
-              <div className="flex items-center gap-2">
-                <input className="px-3 py-2 border rounded-lg" placeholder="Recherche..." value={search} onChange={e=>setSearch(e.target.value)} />
-                <label className="px-3 py-2 border rounded-lg cursor-pointer">
-                  Importer
-                  <input type="file" className="hidden" accept="application/json" onChange={importJSON} />
-                </label>
-                <button className="px-3 py-2 border rounded-lg" onClick={exportJSON}>Exporter</button>
-                <button className="px-3 py-2 border rounded-lg" onclick="">
-                  <span id="installPWA">Installer</span>
-                </button>
+              <div>
+                <label className="text-sm text-gray-600">Avatar (emoji)</label>
+                <input className="w-full border rounded-lg px-3 py-2" value={avatar} onChange={e=>setAvatar(e.target.value)} placeholder="😊"/>
+              </div>
+              <div className="col-span-2">
+                <label className="text-sm text-gray-600">Objectif principal</label>
+                <input className="w-full border rounded-lg px-3 py-2" value={goalTitle} onChange={e=>setGoalTitle(e.target.value)} placeholder="Ex: 30 séances de sport"/>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Métrique</label>
+                <select className="w-full border rounded-lg px-3 py-2" value={metric} onChange={e=>setMetric(e.target.value)}>
+                  <option value="tâches">Tâches</option>
+                  <option value="heures">Heures</option>
+                  <option value="sessions">Sessions</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Cible</label>
+                <input type="number" min="1" className="w-full border rounded-lg px-3 py-2" value={target} onChange={e=>setTarget(Number(e.target.value))}/>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">Échéance</label>
+                <input type="date" className="w-full border rounded-lg px-3 py-2" value={deadline} onChange={e=>setDeadline(e.target.value)}/>
               </div>
             </div>
-            <nav className="max-w-5xl mx-auto px-3 pb-3 flex gap-2">
-              {["tasks","competition","friends"].map(k=>(
-                <button key={k} onClick={()=>setTab(k)} className={"px-3 py-2 rounded-lg " + (tab===k?"bg-blue-600 text-white":"bg-gray-100 text-gray-700")}>
-                  {k==="tasks"?"Mes tâches":k==="competition"?"Compétition":"Amis"}
-                </button>
-              ))}
-            </nav>
-          </header>
+            <button disabled={!name || !goalTitle} className="w-full bg-blue-600 text-white rounded-lg py-2 disabled:opacity-50" onClick={() => onCreate({ name, avatar, goalTitle, metric, target, deadline })}>Créer le profil</button>
+          </div>
+        </div>
+      );
+    }
 
-          <main className="max-w-5xl mx-auto p-3 flex-1 w-full">
-            {tab==="tasks" && (
-              <div>
-                <div className="grid grid-cols-5 gap-2 mb-3">
-                  <Stat label="Total" value={stats.total} color="text-blue-600 bg-blue-50" />
-                  <Stat label="Terminées" value={stats.completed} color="text-green-600 bg-green-50" />
-                  <Stat label="En cours" value={stats.pending} color="text-yellow-600 bg-yellow-50" />
-                  <Stat label="En retard" value={stats.overdue} color="text-red-600 bg-red-50" />
-                  <Stat label="Points" value={stats.totalPoints} color="text-purple-600 bg-purple-50" />
+    // Top-level App component
+    function App() {
+      const [state, setState] = useAppState();
+      const [tab, setTab] = React.useState('tasks');
+      const [flash, setFlash] = React.useState(null);
+      // If no current user, show profile wizard
+      if (!state.me) {
+        const handleCreate = ({ name, avatar, goalTitle, metric, target, deadline }) => {
+          const userId = Date.now();
+          const profile = { id: userId, name, avatar: avatar || '😊', points: 0, level: 1 };
+          const objId = userId + 1;
+          const objective = { id: objId, ownerId: userId, title: goalTitle, metric, target: Number(target), deadline, progress: 0 };
+          setState(s => ({ ...s, me: userId, profiles: [...s.profiles, profile], objectives: [...s.objectives, objective] }));
+          setFlash('Profil créé ✅');
+        };
+        return <ProfileWizard onCreate={handleCreate}/>;
+      }
+      const me = state.profiles.find(p => p.id === state.me);
+      // Helper to show a temporary message
+      const showFlash = msg => { setFlash(msg); setTimeout(() => setFlash(null), 3000); };
+      // Add new objective
+      const addObjective = obj => {
+        const id = Date.now();
+        setState(s => ({ ...s, objectives: [...s.objectives, { id, ownerId: s.me, progress: 0, ...obj }] }));
+        showFlash('Objectif ajouté 🎯');
+      };
+      // Add new task
+      const addTask = task => {
+        const id = Date.now();
+        setState(s => ({ ...s, tasks: [{ id, ownerId: s.me, completed: false, completedAt: null, ...task }, ...s.tasks] }));
+        showFlash('Tâche ajoutée 📝');
+      };
+      // Toggle task completion
+      const toggleTask = task => {
+        setState(prev => {
+          // update tasks array
+          const tasks = prev.tasks.map(t => {
+            if (t.id === task.id) {
+              const completed = !t.completed;
+              return { ...t, completed, completedAt: completed ? new Date().toISOString() : null };
+            }
+            return t;
+          });
+          // find updated task
+          const updated = tasks.find(t => t.id === task.id);
+          let profiles = prev.profiles;
+          let objectives = prev.objectives;
+          if (updated.completed) {
+            // Add points to current user
+            const pts = calculatePoints(updated);
+            profiles = prev.profiles.map(p => {
+              if (p.id === prev.me) {
+                const total = (p.points || 0) + pts;
+                return { ...p, points: total, level: getUserLevel(total) };
+              }
+              return p;
+            });
+            // Update objective progress
+            if (updated.objectiveId) {
+              objectives = prev.objectives.map(o => {
+                if (o.id === updated.objectiveId) {
+                  const prog = (o.progress || 0) + 1;
+                  return { ...o, progress: Math.min(prog, o.target) };
+                }
+                return o;
+              });
+            }
+          }
+          return { ...prev, tasks, profiles, objectives };
+        });
+      };
+      // Save journal entry for today
+      const saveJournal = ({ mood, note }) => {
+        const today = new Date().toISOString().slice(0, 10);
+        setState(s => {
+          const entry = s.journal[today] || { ownerId: s.me, comments: [] };
+          return { ...s, journal: { ...s.journal, [today]: { ...entry, mood, note } } };
+        });
+        showFlash('Journal enregistré 📓');
+      };
+      // Cheer a friend
+      const cheer = (toUserId, msg = 'Bravo !') => {
+        const c = { id: Date.now(), toUserId, fromUserId: state.me, message: msg, type: 'cheer', createdAt: new Date().toISOString() };
+        setState(s => ({ ...s, cheers: [c, ...s.cheers] }));
+        showFlash('Encouragement envoyé 👏');
+      };
+      // Comment on a journal entry
+      const commentOnJournal = (date, toUserId, text) => {
+        setState(s => {
+          const entry = s.journal[date] || { ownerId: toUserId, comments: [] };
+          const comments = [...(entry.comments || []), { fromUserId: s.me, text, createdAt: new Date().toISOString() }];
+          return { ...s, journal: { ...s.journal, [date]: { ...entry, comments } } };
+        });
+        showFlash('Commentaire ajouté 💬');
+      };
+      return (
+        <div className="h-full flex flex-col">
+          <header className="bg-white border-b">
+            <div className="max-w-5xl mx-auto p-3 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="text-2xl">{me.avatar}</div>
+                <div>
+                  <div className="font-bold">{me.name}</div>
+                  <div className="text-xs text-gray-500">Points {me.points || 0} • Niveau {me.level || 1}</div>
                 </div>
-
-                <div className="flex gap-2 mb-3 overflow-x-auto">
-                  {[["all","Toutes"],["pending","En cours"],["completed","Terminées"],["today","Aujourd'hui"],["overdue","En retard"]].map(([k,lab])=>(
-                    <button key={k} onClick={()=>setFilter(k)} className={"px-3 py-2 rounded-full text-sm whitespace-nowrap "+(filter===k?"bg-blue-600 text-white":"bg-gray-100 text-gray-700")}>{lab}</button>
-                  ))}
-                </div>
-
-                <div className="space-y-2">
-                  {filtered.map(t=>(
-                    <TaskCard key={t.id} t={t} onToggle={()=>toggle(t)} onDelete={()=>remove(t)} onEdit={()=>{ setEditing(t); setShowModal(true); }} />
-                  ))}
-                </div>
-
-                <button onClick={()=>{ setEditing(null); setShowModal(true); }} className="fixed bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg">+</button>
               </div>
-            )}
+              <nav className="flex gap-2">
+                {['tasks','objectives','journal','friends','feed'].map(k => (
+                  <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 rounded-lg text-sm ${tab===k ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'}`}>{k==='tasks'?'Tâches':k==='objectives'?'Objectifs':k==='journal'?'Journal':k==='friends'?'Amis':'Fil'}</button>
+                ))}
+              </nav>
+            </div>
+          </header>
+          <main className="max-w-5xl mx-auto p-3 flex-1 w-full overflow-auto">
+            {tab === 'tasks' && <TasksView tasks={state.tasks.filter(t => t.ownerId === state.me)} objectives={state.objectives.filter(o=>o.ownerId===state.me)} onAdd={addTask} onToggle={toggleTask}/>} 
+            {tab === 'objectives' && <ObjectivesView objectives={state.objectives.filter(o => o.ownerId === state.me)} onAdd={addObjective}/>} 
+            {tab === 'journal' && <JournalView entry={state.journal[new Date().toISOString().slice(0,10)]} onSave={saveJournal} />} 
+            {tab === 'friends' && <FriendsView me={me} profiles={state.profiles} cheers={state.cheers} onCheer={cheer} />} 
+            {tab === 'feed' && <FeedView state={state} meId={state.me} onComment={commentOnJournal}/>} 
+          </main>
+          <footer className="text-center text-xs text-gray-500 p-3">PWA • Offline • Données locales</footer>
+          {flash && <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-black text-white text-sm px-3 py-2 rounded" >{flash}</div>}
+        </div>
+      );
+    }
 
-            {tab==="competition" && (
-              <div className="space-y-3">
-                <div className="bg-white border rounded-xl p-4">
-                  <h2 className="font-semibold mb-3">Classement</h2>
-                  <div className="space-y-2">
-                    {leaderboard.map((u,i)=>(
-                      <div key={u.id} className={"flex items-center justify-between p-2 rounded-lg "+(u.id===state.currentUser.id?"bg-blue-50 border-2 border-blue-200":"bg-gray-50")}>
-                        <div className="flex items-center gap-3">
-                          <div className={"w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold "+(i===0?"bg-yellow-400":i===1?"bg-gray-300":i===2?"bg-orange-400":"bg-gray-200")}>{i<3?["🥇","🥈","🥉"][i]:i+1}</div>
-                          <div className="text-2xl">{u.avatar}</div>
-                          <div className="font-medium">{u.name}{u.id===state.currentUser.id && <span className="text-blue-600 ml-1">(Vous)</span>}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-bold text-lg text-purple-600">{u.totalPoints}</div>
-                          <div className="text-xs text-gray-500">points</div>
-                        </div>
-                      </div>
-                    ))}
+    // Tasks view component: list tasks and add new tasks
+    function TasksView({ tasks, objectives, onAdd, onToggle }) {
+      const [show, setShow] = React.useState(false);
+      const [form, setForm] = React.useState({ title: '', desc: '', priority: 'med', dueDate: '', objectiveId: objectives[0] ? objectives[0].id : null });
+      const today = new Date().toISOString().slice(0, 10);
+      return (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Mes tâches</h2>
+            <button className="px-3 py-2 rounded-lg bg-blue-600 text-white" onClick={() => setShow(true)}>Nouvelle tâche</button>
+          </div>
+          <div className="space-y-2">
+            {tasks.map(t => (
+              <div key={t.id} className={`bg-white border rounded-xl p-3 ${t.completed ? 'opacity-70 bg-gray-50' : ''}`}>
+                <div className="flex items-start gap-3">
+                  <button onClick={() => onToggle(t)} className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${t.completed ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}>{t.completed ? '✓' : ''}</button>
+                  <div className="flex-1">
+                    <div className="flex justify-between">
+                      <div className="font-medium">{t.title}</div>
+                      <div className="text-xs text-gray-500">{t.dueDate && ('' + new Date(t.dueDate).toLocaleDateString('fr-FR'))}</div>
+                    </div>
+                    <div className="text-sm text-gray-600">{t.desc}</div>
+                    <div className="text-xs mt-1 flex gap-2 flex-wrap">
+                      <span className="px-2 py-1 rounded-full bg-gray-100">Priorité: {t.priority}</span>
+                      {t.objectiveId && <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700">🎯 {objectives.find(o => o.id === t.objectiveId)?.title || 'Objectif'}</span>}
+                    </div>
                   </div>
                 </div>
-                <div className="bg-white border rounded-xl p-4">
-                  <h2 className="font-semibold mb-3">Défis du jour</h2>
-                  <ul className="space-y-2">
-                    <li className="flex items-center justify-between bg-blue-50 p-3 rounded-lg"><span>🎯 Terminer 5 tâches</span><span>+10 pts</span></li>
-                    <li className="flex items-center justify-between bg-blue-50 p-3 rounded-lg"><span>⚡ Maintenir votre série</span><span>+5 pts</span></li>
-                    <li className="flex items-center justify-between bg-blue-50 p-3 rounded-lg"><span>👑 Battre votre record</span><span>+15 pts</span></li>
-                  </ul>
+              </div>
+            ))}
+            {tasks.length === 0 && <div className="text-gray-500 text-sm">Aucune tâche.</div>}
+          </div>
+          {show && (
+            <div className="fixed inset-0 bg-black/50 flex items-end z-50">
+              <div className="bg-white w-full rounded-t-2xl p-4">
+                <div className="flex items-center justify-between border-b pb-2">
+                  <h3 className="font-semibold">Nouvelle tâche</h3>
+                  <button onClick={() => setShow(false)}>✕</button>
+                </div>
+                <div className="grid gap-3 py-3">
+                  <input className="px-3 py-2 border rounded-lg" placeholder="Titre *" value={form.title} onChange={e=>setForm({...form, title:e.target.value})}/>
+                  <textarea className="px-3 py-2 border rounded-lg" rows="2" placeholder="Description" value={form.desc} onChange={e=>setForm({...form, desc:e.target.value})}></textarea>
+                  <div className="grid grid-cols-2 gap-3">
+                    <select className="px-3 py-2 border rounded-lg" value={form.priority} onChange={e=>setForm({...form, priority:e.target.value})}>
+                      <option value="low">Faible</option>
+                      <option value="med">Moyenne</option>
+                      <option value="high">Élevée</option>
+                    </select>
+                    <input type="date" min={today} className="px-3 py-2 border rounded-lg" value={form.dueDate} onChange={e=>setForm({...form, dueDate:e.target.value})}/>
+                  </div>
+                  <div>
+                    <label className="block text-sm text-gray-600 mb-1">Lier à un objectif</label>
+                    <select className="w-full px-3 py-2 border rounded-lg" value={form.objectiveId || ''} onChange={e=>setForm({...form, objectiveId: e.target.value ? Number(e.target.value) : null})}>
+                      <option value="">— Aucun —</option>
+                      {objectives.map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-3 border-t pt-3">
+                  <button className="flex-1 px-3 py-2 border rounded-lg" onClick={() => setShow(false)}>Annuler</button>
+                  <button disabled={!form.title} className="flex-1 px-3 py-2 rounded-lg text-white bg-blue-600 disabled:opacity-50" onClick={() => { onAdd(form); setForm({ title:'', desc:'', priority:'med', dueDate:'', objectiveId: objectives[0] ? objectives[0].id : null }); setShow(false); }}>Enregistrer</button>
                 </div>
               </div>
-            )}
-
-            {tab==="friends" && (
-              <div className="space-y-3">
-                <button className="w-full bg-gradient-to-r from-green-500 to-blue-600 text-white p-3 rounded-xl">Inviter un ami</button>
-                <div className="space-y-2">
-                  {state.friends.map(f=>(
-                    <div key={f.id} className="bg-white border rounded-xl p-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="text-3xl">{f.avatar}</div>
-                        <div>
-                          <div className="font-medium">{f.name}</div>
-                          <div className="text-xs text-gray-500">{f.email}</div>
-                        </div>
-                      </div>
-                      <div className="text-right text-sm">
-                        <div>🔥 {f.streak}</div>
-                        <div className="text-purple-600 font-semibold">{f.totalPoints} pts</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </main>
-
-          <footer className="text-center text-xs text-gray-500 p-3">PWA • Offline • Import/Export JSON</footer>
-
-          {showModal && (
-            <TaskModal
-              initial={editing || { title:"", description:"", priority:"medium", category:"personnel", dueDate:"", estimatedTime:"" }}
-              onClose={()=>{ setShowModal(false); setEditing(null); }}
-              onSave={addOrUpdate}
-            />
+            </div>
           )}
         </div>
       );
     }
 
-    function Stat({label, value, color}){
+    // Objectives view component
+    function ObjectivesView({ objectives, onAdd }) {
+      const [show, setShow] = React.useState(false);
+      const [form, setForm] = React.useState({ title:'', metric:'tâches', target:10, deadline:'' });
+      const progressPct = o => o.target ? Math.min(100, Math.round(((o.progress || 0) / o.target) * 100)) : 0;
       return (
-        <div className={"text-center p-2 rounded-lg "+color}>
-          <div className="text-lg font-bold">{value}</div>
-          <div className="text-xs">{label}</div>
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Mes objectifs</h2>
+            <button className="px-3 py-2 rounded-lg bg-blue-600 text-white" onClick={() => setShow(true)}>Nouvel objectif</button>
+          </div>
+          <div className="grid md:grid-cols-2 gap-3">
+            {objectives.map(o => (
+              <div key={o.id} className="bg-white border rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">🎯 {o.title}</div>
+                  <div className="text-xs text-gray-500">{o.deadline && new Date(o.deadline).toLocaleDateString('fr-FR')}</div>
+                </div>
+                <div className="text-sm text-gray-600">{o.progress || 0} / {o.target} {o.metric}</div>
+                <div className="h-2 bg-gray-100 rounded mt-2">
+                  <div className="h-2 bg-blue-600 rounded" style={{width: `${progressPct(o)}%`}}></div>
+                </div>
+              </div>
+            ))}
+            {objectives.length === 0 && <div className="text-gray-500 text-sm">Aucun objectif.</div>}
+          </div>
+          {show && (
+            <div className="fixed inset-0 bg-black/50 flex items-end z-50">
+              <div className="bg-white w-full rounded-t-2xl p-4">
+                <div className="flex items-center justify-between border-b pb-2"><h3 className="font-semibold">Nouvel objectif</h3><button onClick={() => setShow(false)}>✕</button></div>
+                <div className="grid gap-3 py-3">
+                  <input className="px-3 py-2 border rounded-lg" placeholder="Titre *" value={form.title} onChange={e=>setForm({...form, title:e.target.value})}/>
+                  <div className="grid grid-cols-3 gap-3">
+                    <select className="px-3 py-2 border rounded-lg" value={form.metric} onChange={e=>setForm({...form, metric:e.target.value})}>
+                      <option value="tâches">Tâches</option><option value="heures">Heures</option><option value="sessions">Sessions</option>
+                    </select>
+                    <input type="number" min="1" className="px-3 py-2 border rounded-lg" value={form.target} onChange={e=>setForm({...form, target:Number(e.target.value)})}/>
+                    <input type="date" className="px-3 py-2 border rounded-lg" value={form.deadline} onChange={e=>setForm({...form, deadline:e.target.value})}/>
+                  </div>
+                </div>
+                <div className="flex gap-3 border-t pt-3">
+                  <button className="flex-1 px-3 py-2 border rounded-lg" onClick={() => setShow(false)}>Annuler</button>
+                  <button disabled={!form.title} className="flex-1 px-3 py-2 rounded-lg text-white bg-blue-600 disabled:opacity-50" onClick={() => { onAdd(form); setForm({ title:'', metric:'tâches', target:10, deadline:'' }); setShow(false); }}>Enregistrer</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
 
-    function TaskCard({t, onToggle, onDelete, onEdit}){
-      const p = priorities[t.priority] || priorities.medium;
-      const c = categories[t.category] || categories.personnel;
-      const overdue = t.dueDate && t.dueDate < new Date().toISOString().slice(0,10) && !t.completed;
+    // Journal view component: mood slider and note
+    function JournalView({ entry, onSave }) {
+      const [mood, setMood] = React.useState(entry?.mood || 3);
+      const [note, setNote] = React.useState(entry?.note || '');
       return (
-        <div className={"bg-white border rounded-xl p-3 shadow-sm "+(t.completed?"opacity-75 bg-gray-50":"")+(overdue?" border-red-200 bg-red-50":" border-gray-200")}>
-          <div className="flex items-start gap-3">
-            <button onClick={onToggle} className={"w-6 h-6 rounded-full border-2 flex items-center justify-center mt-1 "+(t.completed?"bg-green-500 border-green-500":"border-gray-300")}>
-              {t.completed && <span style={{fontSize:"12px"}}>✓</span>}
-            </button>
-            <div className="flex-1">
-              <div className="flex justify-between">
-                <div>
-                  <div className={"font-medium "+(t.completed?"line-through text-gray-500":"")}>{t.title}</div>
-                  {t.description && <div className={"text-sm "+(t.completed?"text-gray-400":"text-gray-600")}>{t.description}</div>}
-                </div>
-                <div className="text-xs text-gray-500">
-                  {t.dueDate && ("🗓 "+formatDate(t.dueDate))}
-                </div>
-              </div>
-              <div className="flex gap-2 mt-2 flex-wrap">
-                <span className={"px-2 py-1 rounded-full text-xs font-medium text-white "+c.color}>{c.emoji} {c.label}</span>
-                <span className={"px-2 py-1 rounded-full text-xs font-medium "+p.color}>{p.icon} {p.label} (+{p.points}pts)</span>
-              </div>
-              <div className="flex gap-2 mt-3">
-                <button onClick={onEdit} className="px-2 py-1 text-xs border rounded-lg">Modifier</button>
-                <button onClick={onDelete} className="px-2 py-1 text-xs border rounded-lg text-red-600">Supprimer</button>
-              </div>
+        <div className="max-w-2xl">
+          <h2 className="font-semibold mb-3">Journal du jour</h2>
+          <div className="bg-white border rounded-xl p-4 space-y-3">
+            <div>
+              <label className="text-sm text-gray-600">Humeur</label>
+              <input type="range" min="1" max="5" value={mood} onChange={e=>setMood(Number(e.target.value))} className="w-full"/>
+              <div className="text-sm text-gray-500">Humeur: {['😖','😕','😐','🙂','😄'][mood-1]}</div>
             </div>
+            <div>
+              <label className="text-sm text-gray-600">Commentaire de fin de journée</label>
+              <textarea className="w-full border rounded-lg px-3 py-2" rows="4" placeholder="Ce que j'ai appris, difficultés, idées..." value={note} onChange={e=>setNote(e.target.value)}></textarea>
+            </div>
+            <button className="px-3 py-2 rounded-lg bg-blue-600 text-white" onClick={() => onSave({ mood, note })}>Enregistrer</button>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">Tes amis peuvent réagir à ton journal dans l’onglet <b>Fil</b>.</p>
+        </div>
+      );
+    }
+
+    // Friends view component: list other profiles and allow cheering
+    function FriendsView({ me, profiles, cheers, onCheer }) {
+      const others = profiles.filter(p => p.id !== me.id);
+      return (
+        <div>
+          <h2 className="font-semibold mb-3">Amis</h2>
+          <div className="grid md:grid-cols-2 gap-3">
+            {others.map(u => (
+              <div key={u.id} className="bg-white border rounded-xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="text-2xl">{u.avatar}</div>
+                  <div>
+                    <div className="font-medium">{u.name}</div>
+                    <div className="text-xs text-gray-500">Points {u.points || 0} • Niveau {u.level || 1}</div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button className="px-3 py-2 rounded-lg border" onClick={() => onCheer(u.id, `Bravo ${u.name} !`)}>👏 Encourager</button>
+                </div>
+              </div>
+            ))}
+            {others.length === 0 && <div className="text-gray-500 text-sm">Pas encore d'amis. Tu es la seule personne pour l’instant.</div>}
           </div>
         </div>
       );
     }
 
-    function TaskModal({initial, onClose, onSave}){
-      const [task, setTask] = useState(initial);
-      const today = new Date().toISOString().slice(0,10);
+    // Feed view component: show cheers and journal comments
+    function FeedView({ state, meId, onComment }) {
+      const items = [];
+      // Add cheers
+      state.cheers.forEach(c => items.push({ type:'cheer', ...c }));
+      // Add journal entries
+      Object.entries(state.journal).forEach(([date, entry]) => {
+        items.push({ type:'journal', date, ...entry });
+      });
+      items.sort((a,b) => new Date((b.createdAt || b.date)) - new Date((a.createdAt || a.date)));
       return (
-        <div className="fixed inset-0 bg-black/50 flex items-end z-50">
-          <div className="bg-white w-full rounded-t-2xl p-4">
-            <div className="flex items-center justify-between border-b pb-2">
-              <h2 className="font-semibold">Tâche</h2>
-              <button onClick={onClose}>✕</button>
-            </div>
-            <div className="grid gap-3 py-3">
-              <input className="px-3 py-2 border rounded-lg" placeholder="Titre *" value={task.title} onChange={e=>setTask({...task, title:e.target.value})} />
-              <textarea className="px-3 py-2 border rounded-lg" rows="3" placeholder="Description" value={task.description||""} onChange={e=>setTask({...task, description:e.target.value})}></textarea>
-              <div className="grid grid-cols-2 gap-3">
-                <select className="px-3 py-2 border rounded-lg" value={task.category} onChange={e=>setTask({...task, category:e.target.value})}>
-                  {Object.entries(categories).map(([k,v])=>(<option key={k} value={k}>{v.emoji} {v.label}</option>))}
-                </select>
-                <select className="px-3 py-2 border rounded-lg" value={task.priority} onChange={e=>setTask({...task, priority:e.target.value})}>
-                  {Object.entries(priorities).map(([k,v])=>(<option key={k} value={k}>{v.icon} {v.label} (+{v.points}pts)</option>))}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <input type="date" className="px-3 py-2 border rounded-lg" min={today} value={task.dueDate||""} onChange={e=>setTask({...task, dueDate:e.target.value})} />
-                <input className="px-3 py-2 border rounded-lg" placeholder="Temps estimé (ex: 30min)" value={task.estimatedTime||""} onChange={e=>setTask({...task, estimatedTime:e.target.value})} />
-              </div>
-            </div>
-            <div className="flex gap-3 border-t pt-3">
-              <button className="flex-1 px-3 py-2 border rounded-lg" onClick={onClose}>Annuler</button>
-              <button className="flex-1 px-3 py-2 rounded-lg text-white bg-blue-600 disabled:opacity-50" disabled={!task.title?.trim()} onClick={()=>onSave(task)}>Enregistrer</button>
-            </div>
-          </div>
+        <div className="space-y-3">
+          <h2 className="font-semibold">Fil social</h2>
+          {items.map((it, idx) => {
+            if (it.type === 'cheer') {
+              const from = state.profiles.find(p => p.id === it.fromUserId);
+              const to = state.profiles.find(p => p.id === it.toUserId);
+              return (
+                <div key={idx} className="bg-white border rounded-xl p-3">
+                  <div className="text-sm text-gray-600">👏 {from?.name || ''} a encouragé {to?.name || ''}</div>
+                  <div className="mt-1">{it.message}</div>
+                  <div className="text-xs text-gray-500 mt-1">{new Date(it.createdAt).toLocaleString('fr-FR')}</div>
+                </div>
+              );
+            }
+            if (it.type === 'journal') {
+              const owner = state.profiles.find(p => p.id === it.ownerId) || state.profiles.find(p => p.id === meId);
+              return (
+                <div key={idx} className="bg-white border rounded-xl p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-600">📝 Journal de {owner?.name || ''} — {new Date(it.date).toLocaleDateString('fr-FR')}</div>
+                    <div className="text-sm">{['😖','😕','😐','🙂','😄'][(it.mood || 3) - 1]}</div>
+                  </div>
+                  <div className="mt-2 text-gray-800">{it.note || <i>Aucun commentaire</i>}</div>
+                  <div className="mt-2 space-y-1">
+                    {(it.comments || []).map((c, i) => {
+                      const from = state.profiles.find(p => p.id === c.fromUserId);
+                      return <div key={i} className="text-sm"><b>{from?.name || '?'}</b>: {c.text} <span className="text-xs text-gray-400">({new Date(c.createdAt).toLocaleTimeString('fr-FR')})</span></div>;
+                    })}
+                  </div>
+                  <AddComment date={it.date} toUserId={owner?.id} onComment={onComment}/>
+                </div>
+              );
+            }
+            return null;
+          })}
+          {items.length === 0 && <div className="text-gray-500 text-sm">Rien pour l’instant. Écris dans ton journal ou encourage un ami.</div>}
         </div>
       );
     }
 
-    // Utils
-    function formatDate(s){ const d=new Date(s); return d.toLocaleDateString('fr-FR',{weekday:'short',month:'short',day:'numeric'}); }
-    function scoreTask(t){
-      let p = (priorities[t.priority]?.points)||1;
-      if(t.dueDate && t.completedAt){
-        const due = new Date(t.dueDate); const comp = new Date(t.completedAt);
-        if(comp <= due) p += 1;
-        const h = comp.getHours(); if(h<8) p+=1; if(h>22) p+=1;
-      }
-      return p;
-    }
-    function getStats(tasks){
-      const total = tasks.length;
-      const completed = tasks.filter(t=>t.completed).length;
-      const overdue = tasks.filter(t=>t.dueDate && t.dueDate < new Date().toISOString().slice(0,10) && !t.completed).length;
-      const totalPoints = tasks.filter(t=>t.completed).reduce((s,t)=> s+scoreTask(t), 0);
-      return { total, completed, overdue, pending: total-completed, totalPoints };
-    }
-    function userLevel(points){ if(points<50) return 1; if(points<150) return 2; if(points<300) return 3; if(points<500) return 4; return 5; }
-    function getLeaderboard(state){
-      const users = [state.currentUser, ...state.friends.filter(f=>f.status==="active")];
-      return users.sort((a,b)=> b.totalPoints - a.totalPoints);
+    // AddComment component for leaving a comment on a journal entry
+    function AddComment({ date, toUserId, onComment }) {
+      const [text, setText] = React.useState('');
+      return (
+        <div className="mt-2 flex gap-2">
+          <input className="flex-1 border rounded-lg px-3 py-2" placeholder="Écrire un commentaire..." value={text} onChange={e=>setText(e.target.value)}/>
+          <button className="px-3 py-2 rounded-lg border" disabled={!text.trim()} onClick={() => { onComment(date, toUserId, text); setText(''); }}>Envoyer</button>
+        </div>
+      );
     }
 
-    // Render
-    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
-
-    // PWA install prompt
-    let deferredPrompt = null;
-    window.addEventListener('beforeinstallprompt', (e)=>{ e.preventDefault(); deferredPrompt = e; document.getElementById('installPWA').onclick = async ()=>{ if(deferredPrompt){ deferredPrompt.prompt(); deferredPrompt=null; } else alert("Sur mobile : menu → Ajouter à l'écran d'accueil"); }; });
+    // Render the app
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>
-
   <script>
+    // Register service worker for offline support
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js');
