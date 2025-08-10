@@ -28,7 +28,8 @@
       objectives: [], // list of objectives {id, ownerId, title, metric, target, deadline, progress}
       tasks: [],      // list of tasks {id, ownerId, objectiveId, title, desc, priority, dueDate, completed, completedAt}
       cheers: [],     // encouragements {id, toUserId, fromUserId, message, createdAt, type}
-      journal: {}     // journal entries keyed by date { [ymd]: { ownerId, mood, note, comments: [] } }
+      journal: {},    // journal entries keyed by date { [ymd]: { ownerId, mood, note, comments: [] } }
+      messages: []    // chat messages {id, fromUserId, toUserId, text, createdAt}
     };
 
     // Helper: compute user level based on total points. Defined once to avoid duplication.
@@ -221,11 +222,29 @@
         });
         showFlash('Journal enregistré 📓');
       };
-      // Cheer a friend
+      // Cheer a friend. In addition to adding the cheer to the global feed,
+      // also store it as a chat message so both participants can see the
+      // encouragement in their conversation. This ensures that cheers are
+      // visible to all invited friends and not just the sender.
       const cheer = (toUserId, msg = 'Bravo !') => {
-        const c = { id: Date.now(), toUserId, fromUserId: state.me, message: msg, type: 'cheer', createdAt: new Date().toISOString() };
-        setState(s => ({ ...s, cheers: [c, ...s.cheers] }));
+        const timestamp = new Date().toISOString();
+        // Build cheer object for the feed
+        const c = { id: Date.now(), toUserId, fromUserId: state.me, message: msg, type: 'cheer', createdAt: timestamp };
+        // Build corresponding chat message
+        const m = { id: Date.now() + 1, fromUserId: state.me, toUserId, text: msg, type: 'cheer', createdAt: timestamp };
+        setState(s => ({
+          ...s,
+          cheers: [c, ...s.cheers],
+          messages: [...(s.messages || []), m]
+        }));
         showFlash('Encouragement envoyé 👏');
+      };
+
+      // Send a chat message to a friend
+      const sendMessage = (toUserId, text) => {
+        const m = { id: Date.now(), fromUserId: state.me, toUserId, text, createdAt: new Date().toISOString() };
+        setState(s => ({ ...s, messages: [...s.messages, m] }));
+        showFlash('Message envoyé 📩');
       };
       // Comment on a journal entry
       const commentOnJournal = (date, toUserId, text) => {
@@ -279,7 +298,7 @@
             {tab === 'tasks' && <TasksView tasks={state.tasks.filter(t => t.ownerId === state.me)} objectives={state.objectives.filter(o=>o.ownerId===state.me)} onAdd={addTask} onToggle={toggleTask}/>} 
             {tab === 'objectives' && <ObjectivesView objectives={state.objectives.filter(o => o.ownerId === state.me)} onAdd={addObjective}/>} 
             {tab === 'journal' && <JournalView entry={state.journal[new Date().toISOString().slice(0,10)]} onSave={saveJournal} />} 
-            {tab === 'friends' && <FriendsView me={me} profiles={state.profiles} cheers={state.cheers} onCheer={cheer} onAddFriend={addFriendFromCode} />} 
+            {tab === 'friends' && <FriendsView me={me} profiles={state.profiles} cheers={state.cheers} tasks={state.tasks} objectives={state.objectives} messages={state.messages} onCheer={cheer} onSendMessage={sendMessage} onAddFriend={addFriendFromCode} />} 
             {tab === 'feed' && <FeedView state={state} meId={state.me} onComment={commentOnJournal}/>} 
           </main>
           <footer className="text-center text-xs text-gray-500 p-3">PWA • Offline • Données locales</footer>
@@ -433,10 +452,15 @@
     }
 
     // Friends view component: list other profiles and allow cheering and invites
-    function FriendsView({ me, profiles, cheers, onCheer, onAddFriend }) {
+function FriendsView({ me, profiles, cheers, tasks, objectives, messages, onCheer, onSendMessage, onAddFriend }) {
       const [showInvite, setShowInvite] = React.useState(false);
       const [showAdd, setShowAdd] = React.useState(false);
       const [inputCode, setInputCode] = React.useState('');
+      // State for viewing a friend's progress
+      const [viewFriend, setViewFriend] = React.useState(null);
+      // State for chatting with a friend
+      const [chatFriend, setChatFriend] = React.useState(null);
+      const [chatText, setChatText] = React.useState('');
       // Encode current user profile into an invite token
       const inviteCode = encodeInvite({ id: me.id, name: me.name, avatar: me.avatar });
       const others = profiles.filter(p => p.id !== me.id);
@@ -459,6 +483,8 @@
                 </div>
                 <div className="flex gap-2">
                   <button className="px-3 py-2 rounded-lg border" onClick={() => onCheer(u.id, `Bravo ${u.name} !`)}>👏 Encourager</button>
+                  <button className="px-3 py-2 rounded-lg border" onClick={() => setViewFriend(u)}>👁 Voir</button>
+                  <button className="px-3 py-2 rounded-lg border" onClick={() => setChatFriend(u)}>💬 Discuter</button>
                 </div>
               </div>
             ))}
@@ -494,6 +520,76 @@
               </div>
             </div>
           )}
+
+      {/* Modal for viewing a friend's progress */}
+      {viewFriend && (
+        <div className="fixed inset-0 bg-black/50 flex items-end z-50">
+          <div className="bg-white w-full rounded-t-2xl p-4">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="font-semibold">Progrès de {viewFriend.name}</h3>
+              <button onClick={() => setViewFriend(null)}>✕</button>
+            </div>
+            <div className="py-3 space-y-3">
+              <div className="text-sm"><b>Points:</b> {viewFriend.points || 0} • Niveau {viewFriend.level || 1}</div>
+              {/* Objectives for the selected friend */}
+              {objectives.filter(o => o.ownerId === viewFriend.id).map(o => (
+                <div key={o.id} className="border rounded-lg p-2">
+                  <div className="font-medium text-sm">🎯 {o.title}</div>
+                  <div className="text-xs text-gray-600">{o.progress || 0} / {o.target} {o.metric}</div>
+                  <div className="h-2 bg-gray-100 rounded mt-1">
+                    <div className="h-2 bg-blue-600 rounded" style={{ width: `${Math.min(100, ((o.progress || 0) / (o.target || 1)) * 100)}%` }}></div>
+                  </div>
+                </div>
+              ))}
+              {objectives.filter(o => o.ownerId === viewFriend.id).length === 0 && (
+                <div className="text-sm text-gray-500">Aucun objectif.</div>
+              )}
+              {/* Tasks list for the selected friend */}
+              <div>
+                <h4 className="font-medium mb-1 text-sm">Tâches</h4>
+                <div className="space-y-1 max-h-40 overflow-auto">
+                  {tasks.filter(t => t.ownerId === viewFriend.id).map(t => (
+                    <div key={t.id} className="flex justify-between text-sm border-b py-1">
+                      <span>{t.title}</span>
+                      <span>{t.completed ? '✔️' : '⏳'}</span>
+                    </div>
+                  ))}
+                  {tasks.filter(t => t.ownerId === viewFriend.id).length === 0 && (
+                    <div className="text-sm text-gray-500">Aucune tâche.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for chatting with a friend */}
+      {chatFriend && (
+        <div className="fixed inset-0 bg-black/50 flex items-end z-50">
+          <div className="bg-white w-full rounded-t-2xl p-4">
+            <div className="flex items-center justify-between border-b pb-2">
+              <h3 className="font-semibold">Conversation avec {chatFriend.name}</h3>
+              <button onClick={() => { setChatFriend(null); setChatText(''); }}>✕</button>
+            </div>
+            <div className="py-3 space-y-3 max-h-60 overflow-auto">
+              {messages.filter(m => (m.fromUserId === me.id && m.toUserId === chatFriend.id) || (m.fromUserId === chatFriend.id && m.toUserId === me.id)).map((m, i) => (
+                <div key={i} className="flex flex-col text-sm">
+                  <span><b>{m.fromUserId === me.id ? 'Moi' : chatFriend.name}:</b> {m.text}</span>
+                  <span className="text-xs text-gray-400">{new Date(m.createdAt).toLocaleTimeString('fr-FR')}</span>
+                </div>
+              ))}
+              {messages.filter(m => (m.fromUserId === me.id && m.toUserId === chatFriend.id) || (m.fromUserId === chatFriend.id && m.toUserId === me.id)).length === 0 && (
+                <div className="text-sm text-gray-500">Aucune conversation.</div>
+              )}
+            </div>
+            <div className="flex gap-2 pt-2 border-t">
+              <input className="flex-1 border rounded-lg px-3 py-2" placeholder="Écrire un message..." value={chatText} onChange={e => setChatText(e.target.value)} />
+              <button className="px-3 py-2 rounded-lg border" disabled={!chatText.trim()} onClick={() => { onSendMessage(chatFriend.id, chatText); setChatText(''); }}>Envoyer</button>
+            </div>
+          </div>
+        </div>
+      )}
         </div>
       );
     }
